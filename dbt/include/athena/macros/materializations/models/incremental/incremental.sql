@@ -11,6 +11,8 @@
   {% set force_batch = config.get('force_batch', False) | as_bool -%}
   {% set unique_tmp_table_suffix = config.get('unique_tmp_table_suffix', False) | as_bool -%}
   {% set temp_schema = config.get('temp_schema') %}
+  {% set incremental_source_name = config.get('incremental_source_name') -%}
+  {% set incremental_source_table_name = config.get('incremental_source_table_name') -%}
   {% set target_relation = this.incorporate(type='table') %}
   {% set existing_relation = load_relation(this) %}
   -- If using insert_overwrite on Hive table, allow to set a unique tmp table suffix
@@ -28,6 +30,13 @@
   -- If no partitions are used with insert_overwrite, we fall back to append mode.
   {% if partitioned_by is none and strategy == 'insert_overwrite' %}
     {% set strategy = 'append' %}
+  {% endif %}
+
+  -- Capture S3 ETags before model runs (outside transaction - S3 operations)
+  {% if existing_relation is not none %}
+    {% set initial_s3_etags = capture_s3_etags(incremental_source_name, incremental_source_table_name) %}
+  {% else %}
+    {% set initial_s3_etags = {} %}
   {% endif %}
 
   {{ run_hooks(pre_hooks, inside_transaction=False) }}
@@ -153,6 +162,14 @@
   {% endfor %}
 
   {{ run_hooks(post_hooks, inside_transaction=False) }}
+
+  -- Delete unchanged S3 files (outside transaction - S3 operations)
+  -- Only run cleanup on whitelisted schemas (schemas starting with "anywhere")
+  {% if initial_s3_etags and target_relation.schema.startswith('anywhere') %}
+    {% set deleted_count = cleanup_s3_etags(initial_s3_etags, incremental_source_name, incremental_source_table_name) %}
+  {% elif initial_s3_etags %}
+    {{ log("Skipping S3 cleanup - only 'anywhere*' schemas are whitelisted. Current schema: " ~ target_relation.schema, info=true) }}
+  {% endif %}
 
   {% if lf_tags_config is not none %}
     {{ adapter.add_lf_tags(target_relation, lf_tags_config) }}
