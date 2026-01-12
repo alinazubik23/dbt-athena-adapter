@@ -76,9 +76,9 @@ def athena_client():
         return mock_athena_client
 
 
-@patch.object(connections, "AthenaCredentials")
 @pytest.fixture(scope="class")
-def athena_credentials():
+@patch.object(connections, "AthenaCredentials")
+def athena_credentials(mock_credentials):
     return AthenaCredentials(
         database=DATA_CATALOG_NAME,
         schema=DATABASE_NAME,
